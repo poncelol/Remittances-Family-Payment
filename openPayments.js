@@ -5,13 +5,13 @@ function resolvePaymentPointer(pointer) {
     if (!pointer || !pointer.startsWith('$')) {
         throw new Error('Formato inválido de Payment Pointer: ' + pointer);
     }
-    // $wallet.interledger-test.dev/yayay → https://wallet.interledger-test.dev/yayay/.well-known/pay
-    return 'https://' + pointer.substring(1) + '/.well-known/pay';
+    // CORRECCIÓN: La URL correcta es sin /.well-known/pay al final
+    // $wallet.interledger-test.dev/yayay → https://wallet.interledger-test.dev/yayay
+    return 'https://' + pointer.substring(1);
 }
 
 class OpenPaymentsClient {
     constructor(config) {
-        // ... (constructor remains the same)
         if (!config || !config.A || !config.B) {
             throw new Error('Configuración incompleta: se requieren wallets A y B');
         }
@@ -72,16 +72,17 @@ class OpenPaymentsClient {
             
             const walletB = await this.getWalletAddress(this.walletAddressB);
             
-            // 💡 CAMBIO CRÍTICO: Usar la URL de capabilities
-            const incomingPaymentsUrl = walletB.capabilities.incomingPayments.id;
-            if (!incomingPaymentsUrl) {
-                throw new Error('No se encontró la URL para crear incoming payments en la wallet B');
-            }
+            // CORRECCIÓN CRÍTICA: Usar la URL correcta
+            const authServer = walletB.authServer;
+            const incomingPaymentsUrl = `${resolvePaymentPointer(this.walletAddressB)}/incoming-payments`;
+            
+            console.log(`📍 Auth Server: ${authServer}`);
+            console.log(`📍 Incoming Payments URL: ${incomingPaymentsUrl}`);
             
             const paymentData = {
                 walletAddress: this.walletAddressB,
                 incomingAmount: {
-                    value: (amount * 100).toString(),
+                    value: (amount * 100).toString(), // Convertir a centavos
                     assetCode: walletB.assetCode || 'USD',
                     assetScale: walletB.assetScale || 2
                 },
@@ -91,11 +92,12 @@ class OpenPaymentsClient {
             console.log('📄 Datos del incoming payment:', JSON.stringify(paymentData, null, 2));
 
             const response = await this.client.post(
-                incomingPaymentsUrl, // Usar la URL completa de capabilities
+                incomingPaymentsUrl,
                 paymentData,
                 {
                     headers: {
-                        'Authorization': `GNAP ${this.accessTokenB}`
+                        'Authorization': `GNAP ${this.accessTokenB}`,
+                        'Content-Type': 'application/json'
                     }
                 }
             );
@@ -119,11 +121,8 @@ class OpenPaymentsClient {
             
             const walletA = await this.getWalletAddress(this.walletAddressA);
             
-            // 💡 CAMBIO CRÍTICO: Usar la URL de capabilities
-            const quotesUrl = walletA.capabilities.quotes.id;
-            if (!quotesUrl) {
-                throw new Error('No se encontró la URL para crear quotes en la wallet A');
-            }
+            // CORRECCIÓN CRÍTICA: Usar la URL correcta
+            const quotesUrl = `${resolvePaymentPointer(this.walletAddressA)}/quotes`;
             
             const quoteData = {
                 walletAddress: this.walletAddressA,
@@ -139,11 +138,12 @@ class OpenPaymentsClient {
             console.log('📄 Datos del quote:', JSON.stringify(quoteData, null, 2));
 
             const response = await this.client.post(
-                quotesUrl, // Usar la URL completa de capabilities
+                quotesUrl,
                 quoteData,
                 {
                     headers: {
-                        'Authorization': `GNAP ${this.accessTokenA}`
+                        'Authorization': `GNAP ${this.accessTokenA}`,
+                        'Content-Type': 'application/json'
                     }
                 }
             );
@@ -167,11 +167,8 @@ class OpenPaymentsClient {
             
             const walletA = await this.getWalletAddress(this.walletAddressA);
             
-            // 💡 CAMBIO CRÍTICO: Usar la URL de capabilities
-            const outgoingPaymentsUrl = walletA.capabilities.outgoingPayments.id;
-            if (!outgoingPaymentsUrl) {
-                throw new Error('No se encontró la URL para ejecutar pagos en la wallet A');
-            }
+            // CORRECCIÓN CRÍTICA: Usar la URL correcta
+            const outgoingPaymentsUrl = `${resolvePaymentPointer(this.walletAddressA)}/outgoing-payments`;
             
             const paymentData = {
                 walletAddress: this.walletAddressA,
@@ -181,11 +178,12 @@ class OpenPaymentsClient {
             console.log('📄 Datos del outgoing payment:', JSON.stringify(paymentData, null, 2));
 
             const response = await this.client.post(
-                outgoingPaymentsUrl, // Usar la URL completa de capabilities
+                outgoingPaymentsUrl,
                 paymentData,
                 {
                     headers: {
-                        'Authorization': `GNAP ${this.accessTokenA}`
+                        'Authorization': `GNAP ${this.accessTokenA}`,
+                        'Content-Type': 'application/json'
                     }
                 }
             );
@@ -202,26 +200,58 @@ class OpenPaymentsClient {
         }
     }
 
-    // ... (El resto del código de la clase se mantiene igual)
+    // Probar conexión
+    async testConnection() {
+        try {
+            console.log('🧪 Probando conexión con Open Payments...');
+            
+            const walletA = await this.getWalletAddress(this.walletAddressA);
+            const walletB = await this.getWalletAddress(this.walletAddressB);
+            
+            return {
+                success: true,
+                walletA: {
+                    id: walletA.id,
+                    assetCode: walletA.assetCode,
+                    assetScale: walletA.assetScale,
+                    authServer: walletA.authServer
+                },
+                walletB: {
+                    id: walletB.id,
+                    assetCode: walletB.assetCode,
+                    assetScale: walletB.assetScale,
+                    authServer: walletB.authServer
+                }
+            };
+        } catch (error) {
+            console.error('❌ Error en test de conexión:', error.message);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
 
     // FUNCIÓN PRINCIPAL: Realizar pago completo A→B
     async sendPayment(amount, description = 'Pago vía bot Telegram') {
-        // ... (this function remains the same)
         try {
             console.log(`\n🎯 Iniciando pago de $${amount}`);
             console.log(`   Desde: ${this.walletAddressA}`);
             console.log(`   Hacia: ${this.walletAddressB}`);
 
             if (!this.accessTokenA || !this.accessTokenB) {
-                throw new Error('Tokens de acceso no configurados. Necesitas obtener tokens GNAP.');
+                throw new Error('Tokens de acceso no configurados. Necesitas obtener tokens GNAP primero.');
             }
 
+            // Paso 1: Crear incoming payment
             const incomingPayment = await this.createIncomingPayment(amount, description);
             console.log('✅ Incoming payment creado');
 
+            // Paso 2: Crear quote
             const quote = await this.createQuote(incomingPayment, amount);
             console.log('✅ Quote creado');
 
+            // Paso 3: Ejecutar pago
             const outgoingPayment = await this.executePayment(quote);
             console.log('✅ Pago ejecutado');
 

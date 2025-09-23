@@ -14,16 +14,19 @@ async function initializeBot() {
     try {
         console.log('🤖 Iniciando Bot de Pagos Interledger...');
 
-        // Inicializar cliente OpenPayments
+        // FORMA CORRECTA: Pasar toda la configuración openPayments
         openPaymentsClient = new OpenPaymentsClient(config.openPayments);
 
-        // Mostrar wallets (verificación básica de conexión)
-        const walletA = await openPaymentsClient.getWalletAddress(openPaymentsClient.walletAddressA);
-        const walletB = await openPaymentsClient.getWalletAddress(openPaymentsClient.walletAddressB);
-
-        console.log('✅ Conexión básica verificada con Open Payments');
-        console.log(`   Wallet A: ${walletA.id}`);
-        console.log(`   Wallet B: ${walletB.id}`);
+        // Probar conexión (esto funcionará ahora)
+        const connectionTest = await openPaymentsClient.testConnection();
+        if (connectionTest.success) {
+            console.log('✅ Conectado exitosamente a Open Payments');
+            console.log(`   Wallet A: ${connectionTest.walletA.id}`);
+            console.log(`   Wallet B: ${connectionTest.walletB.id}`);
+        } else {
+            console.log('⚠️ No se pudo conectar completamente:', connectionTest.error);
+            console.log('   Las consultas básicas funcionan, pero necesitas tokens para transacciones');
+        }
 
         console.log('🚀 Bot iniciado y listo para recibir comandos');
         console.log('📱 Busca tu bot en Telegram y envía /start');
@@ -34,19 +37,23 @@ async function initializeBot() {
         throw error;
     }
 }
+//... (el resto del código se mantiene igual)
 
-// FUNCIÓN PARA MANEJAR PAGOS
+// FUNCIÓN PARA MANEJAR PAGOS CORREGIDA
 async function handlePayment(amount, description, chatId) {
     try {
         if (!openPaymentsClient) {
             throw new Error('Cliente no inicializado');
         }
-
+        
+        // Enviar mensaje de "procesando"
         await bot.sendMessage(chatId, '⏳ Procesando pago...');
-
+        
         const result = await openPaymentsClient.sendPayment(amount, description);
-
+        
         if (result.success) {
+            console.log('🎉 Pago exitoso:', result.message);
+            
             const successMessage = `
 ✅ *¡Pago exitoso!*
 
@@ -59,9 +66,12 @@ async function handlePayment(amount, description, chatId) {
 
 ✨ Pago completado exitosamente
             `;
+            
             await bot.sendMessage(chatId, successMessage, { parse_mode: 'Markdown' });
             return result;
         } else {
+            console.log('❌ Pago fallido:', result.message);
+            
             const errorMessage = `
 ❌ *Error en el pago*
 
@@ -71,10 +81,13 @@ async function handlePayment(amount, description, chatId) {
 
 Por favor, intenta nuevamente o contacta soporte.
             `;
+            
             await bot.sendMessage(chatId, errorMessage, { parse_mode: 'Markdown' });
             return result;
         }
     } catch (error) {
+        console.error('❌ Error en pago:', error.message);
+        
         const criticalErrorMessage = `
 🚨 *Error crítico*
 
@@ -83,14 +96,19 @@ Error: ${error.message}
 
 Por favor, verifica tu configuración.
         `;
+        
         await bot.sendMessage(chatId, criticalErrorMessage, { parse_mode: 'Markdown' });
-        return { success: false, error: error.message };
+        return {
+            success: false,
+            error: error.message
+        };
     }
 }
 
 // COMANDOS DEL BOT
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
+    
     const welcomeMessage = `
 🤖 *Bot de Pagos Interledger*
 
@@ -105,84 +123,85 @@ bot.onText(/\/start/, async (msg) => {
 *Ejemplo:*
 \`/send 10.50 Pago de prueba\`
     `;
+    
     await bot.sendMessage(chatId, welcomeMessage, { parse_mode: 'Markdown' });
 });
 
 bot.onText(/\/test/, async (msg) => {
     const chatId = msg.chat.id;
-
+    
     if (!openPaymentsClient) {
         await bot.sendMessage(chatId, '❌ Cliente no inicializado');
         return;
     }
-
-    await bot.sendMessage(chatId, '🧪 Probando conexión con wallets...');
-
-    try {
-        const walletA = await openPaymentsClient.getWalletAddress(openPaymentsClient.walletAddressA);
-        const walletB = await openPaymentsClient.getWalletAddress(openPaymentsClient.walletAddressB);
-
+    
+    await bot.sendMessage(chatId, '🧪 Probando conexión...');
+    
+    const result = await openPaymentsClient.testConnection();
+    
+    if (result.success) {
         const message = `
-✅ *Conexión verificada*
+✅ *Conexión exitosa*
 
 🔹 Wallet A (Remitente):
-   ID: \`${walletA.id}\`
-   Asset: ${walletA.assetCode || 'USD'}
-   Scale: ${walletA.assetScale || 2}
+   ID: \`${result.walletA.id}\`
+   Asset: ${result.walletA.assetCode || 'USD'}
+   Scale: ${result.walletA.assetScale || 2}
 
 🔹 Wallet B (Receptor):
-   ID: \`${walletB.id}\`
-   Asset: ${walletB.assetCode || 'USD'}
-   Scale: ${walletB.assetScale || 2}
+   ID: \`${result.walletB.id}\`
+   Asset: ${result.walletB.assetCode || 'USD'}
+   Scale: ${result.walletB.assetScale || 2}
 
-⚠️ *Nota:* Para realizar pagos reales necesitas configurar tokens GNAP
+⚠️ *Nota:* Para realizar pagos necesitas configurar tokens GNAP
         `;
+        
         await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
-    } catch (error) {
-        await bot.sendMessage(chatId, `❌ Error consultando wallets: ${error.message}`);
+    } else {
+        await bot.sendMessage(chatId, `❌ Error de conexión: ${result.error}`);
     }
 });
 
 bot.onText(/\/send (.+)/, async (msg, match) => {
     const chatId = msg.chat.id;
     const params = match[1].split(' ');
-
+    
     if (params.length < 1) {
         await bot.sendMessage(chatId, '❌ Formato: /send [cantidad] [descripción opcional]');
         return;
     }
-
+    
     const amount = parseFloat(params[0]);
     const description = params.slice(1).join(' ') || 'Pago vía bot Telegram';
-
+    
     if (isNaN(amount) || amount <= 0) {
         await bot.sendMessage(chatId, '❌ La cantidad debe ser un número positivo');
         return;
     }
-
+    
     if (amount > 1000) {
         await bot.sendMessage(chatId, '❌ Cantidad máxima permitida: $1000');
         return;
     }
-
+    
     console.log(`💸 Procesando pago de $${amount} - "${description}"`);
     await handlePayment(amount, description, chatId);
 });
 
 bot.onText(/\/balance/, async (msg) => {
     const chatId = msg.chat.id;
-
+    
     if (!openPaymentsClient) {
         await bot.sendMessage(chatId, '❌ Cliente no inicializado');
         return;
     }
-
+    
     try {
         await bot.sendMessage(chatId, '📊 Consultando información de wallets...');
-
+        
         const walletA = await openPaymentsClient.getWalletAddress(openPaymentsClient.walletAddressA);
         const walletB = await openPaymentsClient.getWalletAddress(openPaymentsClient.walletAddressB);
-
+        
         const message = `
 📊 *Información de Wallets*
 
@@ -200,7 +219,7 @@ bot.onText(/\/balance/, async (msg) => {
 
 ℹ️ *Nota:* Los balances específicos requieren autenticación adicional
         `;
-
+        
         await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
     } catch (error) {
         await bot.sendMessage(chatId, `❌ Error consultando wallets: ${error.message}`);
@@ -209,14 +228,14 @@ bot.onText(/\/balance/, async (msg) => {
 
 bot.onText(/\/help/, async (msg) => {
     const chatId = msg.chat.id;
-
+    
     const helpMessage = `
 🤖 *Ayuda - Bot de Pagos Interledger*
 
 *Comandos disponibles:*
 
 /start - Iniciar el bot
-/test - Verificar conexión con wallets
+/test - Probar conexión con Open Payments
 /balance - Ver información de wallets
 /send [cantidad] [descripción] - Enviar pago
 /help - Ver esta ayuda
@@ -234,25 +253,33 @@ bot.onText(/\/help/, async (msg) => {
 *Estado actual:*
 ${openPaymentsClient ? '✅ Cliente inicializado' : '❌ Cliente no inicializado'}
 
-⚠️ *Importante:* Para pagos reales necesitas configurar tokens GNAP
+⚠️ *Importante:* Para realizar pagos reales necesitas configurar tokens GNAP
     `;
+    
     await bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
 });
 
 // Manejar errores del bot
-bot.on('error', (error) => console.error('❌ Error del bot:', error));
-bot.on('polling_error', (error) => console.error('❌ Error de polling:', error));
+bot.on('error', (error) => {
+    console.error('❌ Error del bot:', error);
+});
+
+bot.on('polling_error', (error) => {
+    console.error('❌ Error de polling:', error);
+});
 
 // INICIALIZAR APLICACIÓN
 async function main() {
     try {
+        // Inicializar cliente de Open Payments
         await initializeBot();
-
+        
         console.log('\n🎯 Bot listo para usar!');
         console.log('📝 Comandos de prueba:');
-        console.log('   /test - Verificar conexión');
+        console.log('   /test - Probar conexión');
         console.log('   /balance - Ver wallets');
         console.log('   /send 1.00 Prueba - Enviar $1');
+        
     } catch (error) {
         console.error('❌ Error fatal:', error.message);
         process.exit(1);
